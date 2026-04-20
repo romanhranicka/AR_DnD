@@ -1,435 +1,170 @@
 <!DOCTYPE html>
 <html lang="cs">
 <head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no" />
-  <title>WebAR – Detekce prostoru</title>
-
-  <!-- A-Frame -->
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/aframe/1.5.0/aframe.min.js"></script>
+  <meta charset="UTF-8">
+  <title>Three.js WebXR Hit Test</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
 
   <style>
-    /* ── Reset & base ───────────────────────────────────────────── */
-    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
-
-    html, body {
-      width: 100%; height: 100%;
+    body {
+      margin: 0;
       overflow: hidden;
-      background: #000;
-      font-family: 'Courier New', Courier, monospace;
+      font-family: Arial, sans-serif;
     }
 
-    /* ── AR canvas fills everything ────────────────────────────── */
-    a-scene { width: 100vw; height: 100vh; }
-
-    /* ── HUD overlay ────────────────────────────────────────────── */
-    #hud {
-      position: fixed;
-      inset: 0;
-      pointer-events: none;
+    #overlay {
+      position: absolute;
+      top: 20px;
+      left: 50%;
+      transform: translateX(-50%);
+      background: rgba(0,0,0,0.6);
+      color: white;
+      padding: 12px 20px;
+      border-radius: 10px;
+      font-size: 16px;
       z-index: 10;
     }
 
-    /* Status pill ------------------------------------------------- */
-    #status-pill {
+    #startButton {
       position: absolute;
-      top: 28px;
+      bottom: 30px;
       left: 50%;
       transform: translateX(-50%);
-      display: flex;
-      align-items: center;
-      gap: 10px;
-      background: rgba(0, 0, 0, 0.55);
-      border: 1px solid rgba(255, 255, 255, 0.18);
-      backdrop-filter: blur(12px) saturate(160%);
-      -webkit-backdrop-filter: blur(12px) saturate(160%);
-      border-radius: 999px;
-      padding: 10px 22px;
-      white-space: nowrap;
-      transition: background 0.4s, border-color 0.4s;
+      padding: 14px 24px;
+      font-size: 16px;
+      border: none;
+      border-radius: 8px;
+      background: #00c896;
+      color: white;
+      z-index: 10;
     }
-
-    #status-pill.detected {
-      background: rgba(0, 255, 160, 0.18);
-      border-color: rgba(0, 255, 160, 0.55);
-    }
-
-    /* Pulsing dot */
-    #dot {
-      width: 10px; height: 10px;
-      border-radius: 50%;
-      background: #ff6b35;
-      flex-shrink: 0;
-      animation: pulse 1.4s ease-in-out infinite;
-      transition: background 0.4s;
-    }
-    #status-pill.detected #dot {
-      background: #00ffa0;
-      animation: none;
-    }
-
-    @keyframes pulse {
-      0%, 100% { opacity: 1; transform: scale(1); }
-      50%       { opacity: 0.35; transform: scale(0.7); }
-    }
-
-    #status-text {
-      font-size: 13px;
-      font-weight: 700;
-      letter-spacing: 0.08em;
-      text-transform: uppercase;
-      color: #fff;
-      transition: color 0.4s;
-    }
-    #status-pill.detected #status-text { color: #00ffa0; }
-
-    /* Crosshair corners ------------------------------------------ */
-    .corner {
-      position: absolute;
-      width: 20px; height: 20px;
-      border-color: rgba(255, 255, 255, 0.6);
-      border-style: solid;
-      transition: border-color 0.4s;
-    }
-    .corner.tl { top: 16px; left: 16px; border-width: 2px 0 0 2px; }
-    .corner.tr { top: 16px; right: 16px; border-width: 2px 2px 0 0; }
-    .corner.bl { bottom: 16px; left: 16px; border-width: 0 0 2px 2px; }
-    .corner.br { bottom: 16px; right: 16px; border-width: 0 2px 2px 0; }
-
-    /* Start AR button -------------------------------------------- */
-    #start-btn {
-      position: absolute;
-      bottom: 48px;
-      left: 50%;
-      transform: translateX(-50%);
-      pointer-events: all;
-      cursor: pointer;
-      background: rgba(255,255,255,0.08);
-      border: 1.5px solid rgba(255,255,255,0.35);
-      color: #fff;
-      font-family: inherit;
-      font-size: 12px;
-      font-weight: 700;
-      letter-spacing: 0.12em;
-      text-transform: uppercase;
-      padding: 14px 36px;
-      border-radius: 4px;
-      backdrop-filter: blur(8px);
-      -webkit-backdrop-filter: blur(8px);
-      transition: background 0.25s, border-color 0.25s, opacity 0.5s;
-    }
-    #start-btn:hover { background: rgba(255,255,255,0.18); }
-    #start-btn.hidden { opacity: 0; pointer-events: none; }
-
-    /* Scan animation on detected ---------------------------------- */
-    #scan-line {
-      position: absolute;
-      left: 0; right: 0;
-      height: 2px;
-      background: linear-gradient(90deg, transparent, rgba(0,255,160,0.7), transparent);
-      top: 40%;
-      opacity: 0;
-      transition: opacity 0.4s;
-      animation: scanMove 2.2s linear infinite;
-    }
-    #scan-line.active { opacity: 1; }
-
-    @keyframes scanMove {
-      0%   { top: 15%; }
-      100% { top: 85%; }
-    }
-
-    /* No-WebXR fallback banner ------------------------------------ */
-    #no-xr {
-      display: none;
-      position: fixed;
-      inset: 0;
-      background: #0a0a0a;
-      color: #fff;
-      flex-direction: column;
-      align-items: center;
-      justify-content: center;
-      gap: 16px;
-      z-index: 99;
-      font-size: 14px;
-      text-align: center;
-      padding: 32px;
-      line-height: 1.6;
-    }
-    #no-xr h2 { font-size: 18px; color: #ff6b35; }
   </style>
 </head>
+
 <body>
 
-<!-- ── No-WebXR fallback ──────────────────────────────────────── -->
-<div id="no-xr">
-  <h2>WebXR není dostupné</h2>
-  <p>Tato aplikace vyžaduje prohlížeč s&nbsp;podporou WebXR AR&nbsp;(immersive-ar).<br>
-     Doporučujeme Chrome&nbsp;na&nbsp;Androidu nebo Safari&nbsp;16+&nbsp;na&nbsp;iOS.</p>
-</div>
+<div id="overlay">Hledám podlahu...</div>
+<button id="startButton">Spustit AR</button>
 
-<!-- ── HUD overlay ──────────────────────────────────────────────── -->
-<div id="hud">
-  <div class="corner tl"></div>
-  <div class="corner tr"></div>
-  <div class="corner bl"></div>
-  <div class="corner br"></div>
+<script type="module">
+import * as THREE from 'https://unpkg.com/three@0.160.0/build/three.module.js';
+import { ARButton } from 'https://unpkg.com/three@0.160.0/examples/jsm/webxr/ARButton.js';
 
-  <div id="status-pill">
-    <div id="dot"></div>
-    <span id="status-text">Hledám podlahu…</span>
-  </div>
+let camera, scene, renderer;
+let controller;
 
-  <div id="scan-line"></div>
+let reticle;
+let hitTestSource = null;
+let hitTestSourceRequested = false;
 
-  <button id="start-btn">▶ Spustit AR</button>
-</div>
+init();
 
-<!-- ── A-Frame scene ────────────────────────────────────────────── -->
-<a-scene
-  id="ar-scene"
-  embedded
-  renderer="antialias: true; colorManagement: true;"
-  webxr="requiredFeatures: hit-test; optionalFeatures: dom-overlay; overlayElement: #hud;"
-  vr-mode-ui="enabled: false"
-  ar-hit-test-controller
->
-  <!-- Assets: reticle ring texture generated via canvas -->
-  <a-assets>
-    <canvas id="reticle-canvas" width="256" height="256" style="display:none"></canvas>
-    <canvas id="grid-canvas"    width="512" height="512" style="display:none"></canvas>
-  </a-assets>
+function init() {
+  scene = new THREE.Scene();
 
-  <!-- Ambient + directional light so the model looks decent -->
-  <a-light type="ambient"     intensity="0.8"></a-light>
-  <a-light type="directional" intensity="1.2" position="1 3 2"></a-light>
+  camera = new THREE.PerspectiveCamera(70, window.innerWidth / window.innerHeight, 0.01, 20);
 
-  <!-- Reticle group – hidden until first hit ------------------- -->
-  <a-entity id="reticle-group" visible="false">
+  renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+  renderer.setSize(window.innerWidth, window.innerHeight);
+  renderer.xr.enabled = true;
 
-    <!-- Outer dashed ring -->
-    <a-ring
-      id="outer-ring"
-      radius-inner="0.10"
-      radius-outer="0.115"
-      rotation="-90 0 0"
-      material="color: #00ffa0; opacity: 0.9; transparent: true; side: double"
-      animation="property: rotation; from: -90 0 0; to: -90 0 360; loop: true; dur: 3200; easing: linear"
-    ></a-ring>
+  document.body.appendChild(renderer.domElement);
 
-    <!-- Inner fill -->
-    <a-circle
-      radius="0.09"
-      rotation="-90 0 0"
-      material="color: #00ffa0; opacity: 0.25; transparent: true; side: double"
-    ></a-circle>
+  // světlo
+  const light = new THREE.HemisphereLight(0xffffff, 0xbbbbff, 1);
+  scene.add(light);
 
-    <!-- Center dot -->
-    <a-circle
-      radius="0.018"
-      rotation="-90 0 0"
-      material="color: #ffffff; opacity: 0.95; transparent: true; side: double"
-    ></a-circle>
+  // RETICLE (kruh)
+  const geometry = new THREE.RingGeometry(0.08, 0.1, 32);
+  geometry.rotateX(-Math.PI / 2);
 
-    <!-- Grid plane (textured) -->
-    <a-plane
-      id="grid-plane"
-      width="1.2" height="1.2"
-      rotation="-90 0 0"
-      material="src: #grid-tex; transparent: true; opacity: 0.55; side: double"
-    ></a-plane>
+  const material = new THREE.MeshBasicMaterial({ color: 0x00ffaa });
+  reticle = new THREE.Mesh(geometry, material);
+  reticle.matrixAutoUpdate = false;
+  reticle.visible = false;
 
-  </a-entity>
-</a-scene>
+  scene.add(reticle);
 
-<script>
-/* ================================================================
-   1. Generate textures into canvas elements
-   ================================================================ */
+  // GRID (helper)
+  const grid = new THREE.GridHelper(1, 10, 0x00ffaa, 0x00ffaa);
+  grid.visible = false;
+  scene.add(grid);
 
-(function buildTextures() {
-  /* ---- Grid texture ------------------------------------------- */
-  const gc = document.getElementById('grid-canvas');
-  const gx = gc.getContext('2d');
-  const S = 512, cells = 8, step = S / cells;
+  // UI
+  const overlay = document.getElementById('overlay');
+  const button = document.getElementById('startButton');
 
-  gx.clearRect(0, 0, S, S);
+  button.addEventListener('click', async () => {
+    const session = await navigator.xr.requestSession('immersive-ar', {
+      requiredFeatures: ['hit-test', 'local-floor']
+    });
 
-  /* Radial fade mask */
-  const grad = gx.createRadialGradient(S/2, S/2, 0, S/2, S/2, S/2);
-  grad.addColorStop(0,   'rgba(0,255,160,0.55)');
-  grad.addColorStop(0.6, 'rgba(0,255,160,0.30)');
-  grad.addColorStop(1,   'rgba(0,255,160,0.00)');
+    renderer.xr.setReferenceSpaceType('local-floor');
+    await renderer.xr.setSession(session);
 
-  gx.strokeStyle = 'rgba(0,255,160,0.8)';
-  gx.lineWidth   = 1.2;
+    button.style.display = 'none';
 
-  for (let i = 0; i <= cells; i++) {
-    const x = i * step, y = i * step;
-    /* vertical */
-    gx.beginPath(); gx.moveTo(x, 0); gx.lineTo(x, S); gx.stroke();
-    /* horizontal */
-    gx.beginPath(); gx.moveTo(0, y); gx.lineTo(S, y); gx.stroke();
-  }
+    renderer.setAnimationLoop(render);
+  });
 
-  /* Apply fade via destination-in composite */
-  gx.globalCompositeOperation = 'destination-in';
-  gx.fillStyle = grad;
-  gx.fillRect(0, 0, S, S);
-  gx.globalCompositeOperation = 'source-over';
+  window.addEventListener('resize', onWindowResize);
+}
 
-  /* Register as A-Frame asset */
-  const img = new Image();
-  img.id  = 'grid-tex';
-  img.src = gc.toDataURL();
-  document.querySelector('a-assets').appendChild(img);
-  document.getElementById('grid-plane').setAttribute('material', 'src', '#grid-tex');
-})();
+function onWindowResize() {
+  camera.aspect = window.innerWidth / window.innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(window.innerWidth, window.innerHeight);
+}
 
-/* ================================================================
-   2. A-Frame component: ar-hit-test-controller
-   ================================================================ */
-AFRAME.registerComponent('ar-hit-test-controller', {
-  init() {
-    this.xrHitTestSource = null;
-    this.viewerSpace      = null;
-    this.refSpace         = null;
-    this.reticleGroup     = null;
-    this.detected         = false;
-    this.tempMatrix       = new THREE.Matrix4();
+function render(timestamp, frame) {
+  if (frame) {
+    const referenceSpace = renderer.xr.getReferenceSpace();
+    const session = renderer.xr.getSession();
 
-    const sceneEl = this.el;
-
-    sceneEl.addEventListener('enter-vr', () => {
-      const renderer = sceneEl.renderer;
-      const session  = renderer.xr.getSession();
-      if (!session) return;
-
-      document.getElementById('start-btn').classList.add('hidden');
-
-      session.requestReferenceSpace('viewer').then(vs => {
-        this.viewerSpace = vs;
-        return session.requestHitTestSource({ space: vs });
-      }).then(src => {
-        this.xrHitTestSource = src;
-      }).catch(e => console.warn('Hit-test source error:', e));
-
-      session.requestReferenceSpace('local-floor').then(rs => {
-        this.refSpace = rs;
-      }).catch(() => {
-        session.requestReferenceSpace('local').then(rs => {
-          this.refSpace = rs;
+    if (!hitTestSourceRequested) {
+      session.requestReferenceSpace('viewer').then((space) => {
+        session.requestHitTestSource({ space: space }).then((source) => {
+          hitTestSource = source;
         });
       });
 
       session.addEventListener('end', () => {
-        this.xrHitTestSource = null;
-        this.viewerSpace      = null;
-        this.refSpace         = null;
-        this.detected         = false;
-        setDetected(false);
+        hitTestSourceRequested = false;
+        hitTestSource = null;
       });
-    });
 
-    this.reticleGroup = document.getElementById('reticle-group');
-  },
+      hitTestSourceRequested = true;
+    }
 
-  tick() {
-    const sceneEl  = this.el;
-    const renderer = sceneEl.renderer;
-    if (!renderer.xr.isPresenting) return;
+    if (hitTestSource) {
+      const hitTestResults = frame.getHitTestResults(hitTestSource);
 
-    const frame   = sceneEl.frame;
-    const session = renderer.xr.getSession();
-    if (!frame || !session || !this.xrHitTestSource || !this.refSpace) return;
+      if (hitTestResults.length > 0) {
+        const hit = hitTestResults[0];
+        const pose = hit.getPose(referenceSpace);
 
-    const hitTestResults = frame.getHitTestResults(this.xrHitTestSource);
+        reticle.visible = true;
+        reticle.matrix.fromArray(pose.transform.matrix);
 
-    if (hitTestResults.length > 0) {
-      const hit  = hitTestResults[0];
-      const pose = hit.getPose(this.refSpace);
-      if (!pose) return;
+        // GRID pozice = reticle
+        const position = new THREE.Vector3();
+        position.setFromMatrixPosition(reticle.matrix);
 
-      this.reticleGroup.object3D.visible = true;
+        const grid = scene.children.find(obj => obj.type === 'GridHelper');
+        grid.visible = true;
+        grid.position.copy(position);
 
-      this.tempMatrix.fromArray(pose.transform.matrix);
-
-      const pos = new THREE.Vector3();
-      const quat = new THREE.Quaternion();
-      const scale = new THREE.Vector3();
-      this.tempMatrix.decompose(pos, quat, scale);
-
-      this.reticleGroup.object3D.position.copy(pos);
-
-      /* Keep reticle flat on the detected plane */
-      const euler = new THREE.Euler().setFromQuaternion(quat, 'XYZ');
-      this.reticleGroup.object3D.rotation.set(euler.x, euler.y, euler.z);
-
-      if (!this.detected) {
-        this.detected = true;
-        setDetected(true);
-      }
-    } else {
-      this.reticleGroup.object3D.visible = false;
-      if (this.detected) {
-        this.detected = false;
-        setDetected(false);
+        document.getElementById('overlay').innerText = "Prostor detekován";
+      } else {
+        reticle.visible = false;
+        document.getElementById('overlay').innerText = "Hledám podlahu...";
       }
     }
   }
-});
 
-/* ================================================================
-   3. UI helpers
-   ================================================================ */
-function setDetected(yes) {
-  const pill = document.getElementById('status-pill');
-  const text = document.getElementById('status-text');
-  const scan = document.getElementById('scan-line');
-
-  if (yes) {
-    pill.classList.add('detected');
-    text.textContent = 'Prostor detekován';
-    scan.classList.add('active');
-  } else {
-    pill.classList.remove('detected');
-    text.textContent = 'Hledám podlahu…';
-    scan.classList.remove('active');
-  }
+  renderer.render(scene, camera);
 }
-
-/* ================================================================
-   4. Start AR button
-   ================================================================ */
-const startBtn = document.getElementById('start-btn');
-const scene    = document.getElementById('ar-scene');
-
-startBtn.addEventListener('click', async () => {
-  if (!navigator.xr) {
-    document.getElementById('no-xr').style.display = 'flex';
-    return;
-  }
-  const supported = await navigator.xr.isSessionSupported('immersive-ar').catch(() => false);
-  if (!supported) {
-    document.getElementById('no-xr').style.display = 'flex';
-    return;
-  }
-  scene.enterAR();
-});
-
-/* ================================================================
-   5. Check WebXR on load
-   ================================================================ */
-window.addEventListener('load', async () => {
-  if (!navigator.xr) {
-    document.getElementById('no-xr').style.display = 'flex';
-    return;
-  }
-  const ok = await navigator.xr.isSessionSupported('immersive-ar').catch(() => false);
-  if (!ok) {
-    document.getElementById('no-xr').style.display = 'flex';
-  }
-});
 </script>
+
 </body>
 </html>
