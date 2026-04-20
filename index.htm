@@ -2,7 +2,7 @@
 <html lang="cs">
 <head>
 <meta charset="UTF-8">
-<title>AI + AR Dual Mode</title>
+<title>AI → AR Flow</title>
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 
 <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs"></script>
@@ -11,17 +11,18 @@
 <style>
 body { margin:0; overflow:hidden; font-family:Arial; }
 
-#ui {
+#topUI {
   position:absolute;
   top:20px;
   left:50%;
   transform:translateX(-50%);
   z-index:20;
+  text-align:center;
 }
 
 button {
   padding:10px;
-  margin:5px;
+  margin-top:10px;
   font-size:16px;
 }
 
@@ -48,12 +49,13 @@ video {
 
 <body>
 
-<div id="ui">
-  <button onclick="startAI()">AI scan</button>
-  <button onclick="startAR()">Start AR</button>
+<div id="topUI">
+  <div id="status">Spusť AI scan</div>
+  <button id="scanBtn">Spustit AI</button>
+  <button id="useBtn" style="display:none;">Použít v AR</button>
 </div>
 
-<div id="overlay">Vyber režim</div>
+<div id="overlay"></div>
 <video id="video" autoplay playsinline></video>
 
 <script type="module">
@@ -63,55 +65,63 @@ import { ARButton } from 'https://unpkg.com/three@0.160.0/examples/jsm/webxr/ARB
 let model;
 let video = document.getElementById("video");
 
-let lastDetected = "žádný objekt";
+let lastDetected = null;
 
-// ===== AI MODE =====
-window.startAI = async function() {
+// UI
+const status = document.getElementById("status");
+const scanBtn = document.getElementById("scanBtn");
+const useBtn = document.getElementById("useBtn");
 
-  overlay("Spouštím AI...");
+// ===== AI START =====
+scanBtn.onclick = async () => {
+
+  status.innerText = "Spouštím AI...";
+  scanBtn.style.display = "none";
 
   const stream = await navigator.mediaDevices.getUserMedia({
     video: { facingMode: "environment" }
   });
 
-  video.style.display = "block";
   video.srcObject = stream;
 
   await new Promise(r => video.onloadeddata = r);
 
   model = await cocoSsd.load();
 
-  overlay("AI běží");
-
+  status.innerText = "AI běží...";
   aiLoop();
 };
 
+// ===== AI LOOP =====
 async function aiLoop() {
-
-  if (!model) return;
 
   const predictions = await model.detect(video);
 
   if (predictions.length > 0) {
     lastDetected = predictions[0].class;
-    overlay("Vidím: " + lastDetected);
+    status.innerText = "Vidím: " + lastDetected;
+    useBtn.style.display = "block";
   }
 
   requestAnimationFrame(aiLoop);
 }
 
-// ===== AR MODE =====
-window.startAR = function() {
+// ===== SWITCH TO AR =====
+useBtn.onclick = () => {
 
-  video.srcObject = null;
+  if (!lastDetected) return;
+
+  // stop video
+  video.srcObject.getTracks().forEach(t => t.stop());
   video.style.display = "none";
 
-  overlay("Spusť AR tlačítkem");
+  document.getElementById("topUI").style.display = "none";
 
-  initAR();
+  startAR();
 };
 
-function initAR() {
+// ===== AR =====
+function startAR() {
 
   let scene = new THREE.Scene();
   let camera = new THREE.PerspectiveCamera(70, innerWidth/innerHeight, 0.01, 20);
