@@ -1,0 +1,91 @@
+<!DOCTYPE html>
+<html lang="cs">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Bezpečnostní Audit AR</title>
+    <script src="https://aframe.io/releases/1.4.0/aframe.min.js"></script>
+    <script src="https://unpkg.com/aframe-look-at-component@0.8.0/dist/aframe-look-at-component.min.js"></script>
+    
+    <style>
+        body { margin: 0; overflow: hidden; font-family: sans-serif; }
+        .ui-overlay {
+            position: absolute; bottom: 30px; left: 50%; transform: translateX(-50%);
+            width: 85%; background: rgba(255, 255, 255, 0.9);
+            padding: 20px; border-radius: 15px; box-shadow: 0 10px 25px rgba(0,0,0,0.2);
+            z-index: 10; text-align: center;
+        }
+        button {
+            background: #2563eb; color: white; border: none; padding: 12px 25px;
+            border-radius: 8px; font-weight: bold; font-size: 16px; width: 100%;
+        }
+        .risk-label {
+            background: #ef4444; color: white; padding: 5px 10px; border-radius: 5px;
+            font-size: 12px; margin-bottom: 10px; display: inline-block;
+        }
+    </style>
+</head>
+<body>
+
+    <div class="ui-overlay">
+        <div id="risk-info" style="display: none;">
+            <span class="risk-label">DETEKTOVÁNO RIZIKO</span>
+            <h2 id="risk-title" style="margin: 5px 0;">Vysoký práh</h2>
+            <p id="risk-desc" style="color: #4b5563; font-size: 14px;">Riziko zakopnutí (výška > 2cm). Doporučujeme nájezdovou lištu.</p>
+        </div>
+        <button id="add-btn">OZNAČIT MÍSTO V PROSTORU</button>
+    </div>
+
+    <a-scene webxr="optionalFeatures: hit-test; overlayElement: #ui-overlay;">
+        <a-entity id="anchor" position="0 0 -3"></a-entity>
+        
+        <a-entity light="type: ambient; intensity: 0.5;"></a-entity>
+        <a-entity light="type: directional; intensity: 0.8;" position="1 2 1"></a-entity>
+        <a-camera position="0 1.6 0"></a-camera>
+
+        <a-entity id="risk-container"></a-entity>
+    </a-scene>
+
+    <script>
+        const btn = document.getElementById('add-btn');
+        const info = document.getElementById('risk-info');
+        const container = document.getElementById('risk-container');
+        let count = 0;
+
+        const risks = [
+            { t: "Vysoký práh", d: "Riziko zakopnutí (výška > 2cm). Doporučujeme lištu." },
+            { t: "Kluzký povrch", d: "Detekována lesklá dlažba. Doporučujeme protiskluzový nátěr." },
+            { t: "Chybějící madlo", d: "V blízkosti vany chybí opora. Nutná montáž madla." }
+        ];
+
+        btn.addEventListener('click', () => {
+            // Vytvoření 3D tečky
+            const dot = document.createElement('a-sphere');
+            dot.setAttribute('radius', '0.15');
+            dot.setAttribute('color', '#ef4444');
+            // Umístění před uživatele
+            dot.setAttribute('position', `0 0.5 -2`); 
+            dot.setAttribute('animation', 'property: scale; to: 1.2 1.2 1.2; dir: alternate; dur: 600; loop: true');
+            
+            // Přidání popisku, který se otáčí za kamerou
+            const label = document.createElement('a-text');
+            label.setAttribute('value', '!');
+            label.setAttribute('align', 'center');
+            label.setAttribute('position', '0 0.4 0');
+            label.setAttribute('scale', '2 2 2');
+            label.setAttribute('look-at', '[camera]');
+            dot.appendChild(label);
+
+            container.appendChild(dot);
+
+            // Aktualizace UI
+            const currentRisk = risks[count % risks.length];
+            document.getElementById('risk-title').innerText = currentRisk.t;
+            document.getElementById('risk-desc').innerText = currentRisk.d;
+            info.style.display = 'block';
+            
+            count++;
+        });
+    </script>
+</body>
+</html>
