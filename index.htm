@@ -2,20 +2,30 @@
 <html lang="cs">
 <head>
 <meta charset="UTF-8">
-<title>AR 3D Measure</title>
+<title>AR Room Scan</title>
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 
 <style>
 body { margin:0; overflow:hidden; font-family:Arial; }
 
 #overlay {
-  position:absolute;
-  top:20px;
-  left:50%;
+  position:absolute; top:20px; left:50%;
   transform:translateX(-50%);
   background:rgba(0,0,0,0.6);
+  color:white; padding:10px 16px;
+  border-radius:8px;
+  z-index:10;
+}
+
+#scanBtn {
+  position:absolute;
+  bottom:20px;
+  left:50%;
+  transform:translateX(-50%);
+  padding:14px 24px;
+  background:#00c896;
   color:white;
-  padding:10px 16px;
+  border:none;
   border-radius:8px;
   z-index:10;
 }
@@ -23,36 +33,34 @@ body { margin:0; overflow:hidden; font-family:Arial; }
 </head>
 
 <body>
+
 <div id="overlay">Spusť AR</div>
+<button id="scanBtn">Start scan</button>
 
 <script type="module">
 import * as THREE from 'https://unpkg.com/three@0.160.0/build/three.module.js';
 import { ARButton } from 'https://unpkg.com/three@0.160.0/examples/jsm/webxr/ARButton.js';
 
 let scene, camera, renderer;
-let reticle, grid, controller;
+let reticle, grid;
 
 let hitTestSource = null;
 let hitTestSourceRequested = false;
 
-let pointA = null;
-
-// raycast pro 3D
-let raycaster = new THREE.Raycaster();
-let tempMatrix = new THREE.Matrix4();
+let scanning = false;
+let points = [];
+let line = null;
 
 init();
 
 function init() {
 
   scene = new THREE.Scene();
-
-  camera = new THREE.PerspectiveCamera(70, window.innerWidth/window.innerHeight, 0.01, 20);
+  camera = new THREE.PerspectiveCamera(70, innerWidth/innerHeight, 0.01, 20);
 
   renderer = new THREE.WebGLRenderer({alpha:true, antialias:true});
-  renderer.setSize(window.innerWidth, window.innerHeight);
+  renderer.setSize(innerWidth, innerHeight);
   renderer.xr.enabled = true;
-
   document.body.appendChild(renderer.domElement);
 
   document.body.appendChild(ARButton.createButton(renderer, {
@@ -61,128 +69,97 @@ function init() {
 
   scene.add(new THREE.HemisphereLight(0xffffff,0xbbbbff,1));
 
-  // reticle (podlaha)
   const geo = new THREE.RingGeometry(0.08,0.1,32);
   geo.rotateX(-Math.PI/2);
   reticle = new THREE.Mesh(geo, new THREE.MeshBasicMaterial({color:0x00ffaa}));
-  reticle.matrixAutoUpdate = false;
-  reticle.visible = false;
+  reticle.matrixAutoUpdate=false;
+  reticle.visible=false;
   scene.add(reticle);
 
-  // grid
   grid = new THREE.GridHelper(1,10,0x00ffaa,0x00ffaa);
-  grid.visible = false;
+  grid.visible=false;
   scene.add(grid);
 
-  // XR controller (tap)
-  controller = renderer.xr.getController(0);
-  controller.addEventListener('select', onSelect);
-  scene.add(controller);
+  document.getElementById("scanBtn").onclick = toggleScan;
 
   renderer.setAnimationLoop(render);
-
-  window.addEventListener('resize', onResize);
 }
 
-function onResize() {
-  camera.aspect = window.innerWidth/window.innerHeight;
-  camera.updateProjectionMatrix();
-  renderer.setSize(window.innerWidth, window.innerHeight);
-}
+function toggleScan() {
+  scanning = !scanning;
 
-// ====== 3D POINT (RAYCAST) ======
-function getPointInFront(distance = 2) {
-  const xrCamera = renderer.xr.getCamera(camera);
-
-  tempMatrix.identity().extractRotation(xrCamera.matrixWorld);
-
-  raycaster.ray.origin.setFromMatrixPosition(xrCamera.matrixWorld);
-  raycaster.ray.direction.set(0, 0, -1).applyMatrix4(tempMatrix);
-
-  return raycaster.ray.origin.clone().add(
-    raycaster.ray.direction.clone().multiplyScalar(distance)
-  );
-}
-
-// ====== TAP ======
-function onSelect() {
-
-  let pos;
-
-  if (reticle.visible) {
-    // přesná podlaha
-    pos = new THREE.Vector3().setFromMatrixPosition(reticle.matrix);
+  if (!scanning) {
+    finishScan();
   } else {
-    // 3D fallback
-    pos = getPointInFront(2);
-  }
-
-  if (!pointA) {
-    pointA = pos.clone();
-    addMarker(pointA);
-    overlay("Vyber druhý bod");
-  } else {
-    addMarker(pos);
-    createLine(pointA, pos);
-    showDistance(pointA, pos);
-
-    pointA = null;
-    overlay("Hotovo – pokračuj");
+    points = [];
+    overlay("Skenuji… choď pomalu kolem místnosti");
   }
 }
 
-// ====== MARKER ======
-function addMarker(pos) {
-  const m = new THREE.Mesh(
-    new THREE.SphereGeometry(0.025),
-    new THREE.MeshBasicMaterial({color:0x007aff})
+function addPoint(pos) {
+
+  // filtr – ukládej jen když je bod dost daleko
+  if (points.length > 0) {
+    const last = points[points.length - 1];
+    if (pos.distanceTo(last) < 0.3) return;
+  }
+
+  points.push(pos.clone());
+
+  // vizualizace bodu
+  const dot = new THREE.Mesh(
+    new THREE.SphereGeometry(0.02),
+    new THREE.MeshBasicMaterial({color:0xffff00})
   );
-  m.position.copy(pos);
-  scene.add(m);
+  dot.position.copy(pos);
+  scene.add(dot);
 }
 
-// ====== LINE ======
-function createLine(a,b) {
-  const line = new THREE.Line(
-    new THREE.BufferGeometry().setFromPoints([a,b]),
-    new THREE.LineBasicMaterial({color:0xffffff})
+function drawPath() {
+  if (points.length < 2) return;
+
+  if (line) scene.remove(line);
+
+  line = new THREE.Line(
+    new THREE.BufferGeometry().setFromPoints(points),
+    new THREE.LineBasicMaterial({color:0x00ffff})
   );
+
   scene.add(line);
 }
 
-// ====== DISTANCE ======
-function showDistance(a,b) {
-  const dist = a.distanceTo(b);
+function finishScan() {
+  if (points.length < 3) {
+    overlay("Málo bodů");
+    return;
+  }
 
-  const canvas = document.createElement('canvas');
-  canvas.width = 512;
-  canvas.height = 256;
+  // bounding box
+  let minX=Infinity, maxX=-Infinity;
+  let minZ=Infinity, maxZ=-Infinity;
 
-  const ctx = canvas.getContext('2d');
-  ctx.fillStyle = "white";
-  ctx.font = "48px Arial";
-  ctx.textAlign = "center";
-  ctx.fillText(dist.toFixed(2) + " m", 256, 130);
+  points.forEach(p=>{
+    minX = Math.min(minX, p.x);
+    maxX = Math.max(maxX, p.x);
+    minZ = Math.min(minZ, p.z);
+    maxZ = Math.max(maxZ, p.z);
+  });
 
-  const sprite = new THREE.Sprite(
-    new THREE.SpriteMaterial({ map: new THREE.CanvasTexture(canvas) })
+  const width = maxX - minX;
+  const length = maxZ - minZ;
+  const area = width * length;
+
+  overlay(
+    `Šířka: ${width.toFixed(2)} m | ` +
+    `Délka: ${length.toFixed(2)} m | ` +
+    `Plocha: ${area.toFixed(2)} m²`
   );
-
-  const mid = new THREE.Vector3().addVectors(a,b).multiplyScalar(0.5);
-  mid.y += 0.05;
-
-  sprite.position.copy(mid);
-  sprite.scale.set(0.5,0.25,1);
-
-  scene.add(sprite);
 }
 
-// ====== UI ======
-function overlay(t) {
+function overlay(t){
   document.getElementById('overlay').innerText = t;
 }
 
-// ====== RENDER ======
 function render(timestamp, frame) {
 
   if (!renderer.xr.isPresenting) {
@@ -191,7 +168,6 @@ function render(timestamp, frame) {
   }
 
   if (frame) {
-
     const session = renderer.xr.getSession();
     const refSpace = renderer.xr.getReferenceSpace();
 
@@ -201,7 +177,6 @@ function render(timestamp, frame) {
           hitTestSource = source;
         });
       });
-
       hitTestSourceRequested = true;
     }
 
@@ -219,12 +194,14 @@ function render(timestamp, frame) {
         grid.visible = true;
         grid.position.copy(pos);
 
-        overlay("Tapni pro bod (podlaha)");
+        if (scanning) {
+          addPoint(pos);
+          drawPath();
+        }
+
       } else {
         reticle.visible = false;
         grid.visible = false;
-
-        overlay("Tapni pro bod (3D prostor)");
       }
     }
   }
