@@ -2,30 +2,23 @@
 <html lang="cs">
 <head>
 <meta charset="UTF-8">
-<title>AR Room Scan</title>
+<title>AR AI Labels</title>
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+<script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs"></script>
+<script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/coco-ssd"></script>
 
 <style>
 body { margin:0; overflow:hidden; font-family:Arial; }
 
 #overlay {
-  position:absolute; top:20px; left:50%;
-  transform:translateX(-50%);
-  background:rgba(0,0,0,0.6);
-  color:white; padding:10px 16px;
-  border-radius:8px;
-  z-index:10;
-}
-
-#scanBtn {
   position:absolute;
-  bottom:20px;
+  top:20px;
   left:50%;
   transform:translateX(-50%);
-  padding:14px 24px;
-  background:#00c896;
+  background:rgba(0,0,0,0.6);
   color:white;
-  border:none;
+  padding:10px 16px;
   border-radius:8px;
   z-index:10;
 }
@@ -34,26 +27,21 @@ body { margin:0; overflow:hidden; font-family:Arial; }
 
 <body>
 
-<div id="overlay">Spusť AR</div>
-<button id="scanBtn">Start scan</button>
+<div id="overlay">Načítám AI...</div>
 
 <script type="module">
 import * as THREE from 'https://unpkg.com/three@0.160.0/build/three.module.js';
 import { ARButton } from 'https://unpkg.com/three@0.160.0/examples/jsm/webxr/ARButton.js';
 
 let scene, camera, renderer;
-let reticle, grid;
+let controller;
 
-let hitTestSource = null;
-let hitTestSourceRequested = false;
-
-let scanning = false;
-let points = [];
-let line = null;
+let model;
+let labels = [];
 
 init();
 
-function init() {
+async function init() {
 
   scene = new THREE.Scene();
   camera = new THREE.PerspectiveCamera(70, innerWidth/innerHeight, 0.01, 20);
@@ -63,149 +51,96 @@ function init() {
   renderer.xr.enabled = true;
   document.body.appendChild(renderer.domElement);
 
-  document.body.appendChild(ARButton.createButton(renderer, {
-    requiredFeatures: ['hit-test','local-floor']
-  }));
+  document.body.appendChild(ARButton.createButton(renderer));
 
   scene.add(new THREE.HemisphereLight(0xffffff,0xbbbbff,1));
 
-  const geo = new THREE.RingGeometry(0.08,0.1,32);
-  geo.rotateX(-Math.PI/2);
-  reticle = new THREE.Mesh(geo, new THREE.MeshBasicMaterial({color:0x00ffaa}));
-  reticle.matrixAutoUpdate=false;
-  reticle.visible=false;
-  scene.add(reticle);
+  // XR controller
+  controller = renderer.xr.getController(0);
+  scene.add(controller);
 
-  grid = new THREE.GridHelper(1,10,0x00ffaa,0x00ffaa);
-  grid.visible=false;
-  scene.add(grid);
-
-  document.getElementById("scanBtn").onclick = toggleScan;
+  // načtení modelu
+  model = await cocoSsd.load();
+  overlay("AI připravena – skenuji objekty");
 
   renderer.setAnimationLoop(render);
+
+  detectLoop();
 }
 
-function toggleScan() {
-  scanning = !scanning;
+// ===== AI LOOP =====
+async function detectLoop() {
 
-  if (!scanning) {
-    finishScan();
-  } else {
-    points = [];
-    overlay("Skenuji… choď pomalu kolem místnosti");
-  }
-}
+  const video = renderer.domElement;
 
-function addPoint(pos) {
+  if (!model) return;
 
-  // filtr – ukládej jen když je bod dost daleko
-  if (points.length > 0) {
-    const last = points[points.length - 1];
-    if (pos.distanceTo(last) < 0.3) return;
-  }
+  const predictions = await model.detect(video);
 
-  points.push(pos.clone());
+  // smaž staré labely
+  labels.forEach(l => scene.remove(l));
+  labels = [];
 
-  // vizualizace bodu
-  const dot = new THREE.Mesh(
-    new THREE.SphereGeometry(0.02),
-    new THREE.MeshBasicMaterial({color:0xffff00})
-  );
-  dot.position.copy(pos);
-  scene.add(dot);
-}
+  predictions.forEach(p => {
 
-function drawPath() {
-  if (points.length < 2) return;
+    if (p.score < 0.6) return;
 
-  if (line) scene.remove(line);
+    const x = (p.bbox[0] + p.bbox[2]/2) / window.innerWidth;
+    const y = (p.bbox[1] + p.bbox[3]/2) / window.innerHeight;
 
-  line = new THREE.Line(
-    new THREE.BufferGeometry().setFromPoints(points),
-    new THREE.LineBasicMaterial({color:0x00ffff})
-  );
+    const pos = screenToWorld(x, y);
 
-  scene.add(line);
-}
+    const label = createLabel(p.class);
+    label.position.copy(pos);
 
-function finishScan() {
-  if (points.length < 3) {
-    overlay("Málo bodů");
-    return;
-  }
-
-  // bounding box
-  let minX=Infinity, maxX=-Infinity;
-  let minZ=Infinity, maxZ=-Infinity;
-
-  points.forEach(p=>{
-    minX = Math.min(minX, p.x);
-    maxX = Math.max(maxX, p.x);
-    minZ = Math.min(minZ, p.z);
-    maxZ = Math.max(maxZ, p.z);
+    scene.add(label);
+    labels.push(label);
   });
 
-  const width = maxX - minX;
-  const length = maxZ - minZ;
-  const area = width * length;
-
-  overlay(
-    `Šířka: ${width.toFixed(2)} m | ` +
-    `Délka: ${length.toFixed(2)} m | ` +
-    `Plocha: ${area.toFixed(2)} m²`
-  );
+  setTimeout(detectLoop, 300); // ~3 FPS
 }
 
-function overlay(t){
+// ===== SCREEN → 3D =====
+function screenToWorld(x, y) {
+  const vector = new THREE.Vector3(
+    (x * 2 - 1),
+    -(y * 2 - 1),
+    0.5
+  );
+
+  vector.unproject(camera);
+
+  const dir = vector.sub(camera.position).normalize();
+  return camera.position.clone().add(dir.multiplyScalar(2));
+}
+
+// ===== LABEL =====
+function createLabel(text) {
+  const canvas = document.createElement('canvas');
+  canvas.width = 256;
+  canvas.height = 128;
+
+  const ctx = canvas.getContext('2d');
+  ctx.fillStyle = "white";
+  ctx.font = "28px Arial";
+  ctx.fillText(text, 10, 64);
+
+  const texture = new THREE.CanvasTexture(canvas);
+
+  const sprite = new THREE.Sprite(
+    new THREE.SpriteMaterial({ map: texture })
+  );
+
+  sprite.scale.set(0.5,0.25,1);
+
+  return sprite;
+}
+
+function overlay(t) {
   document.getElementById('overlay').innerText = t;
 }
 
-function render(timestamp, frame) {
-
-  if (!renderer.xr.isPresenting) {
-    renderer.render(scene, camera);
-    return;
-  }
-
-  if (frame) {
-    const session = renderer.xr.getSession();
-    const refSpace = renderer.xr.getReferenceSpace();
-
-    if (!hitTestSourceRequested) {
-      session.requestReferenceSpace('viewer').then(space=>{
-        session.requestHitTestSource({space}).then(source=>{
-          hitTestSource = source;
-        });
-      });
-      hitTestSourceRequested = true;
-    }
-
-    if (hitTestSource) {
-      const hits = frame.getHitTestResults(hitTestSource);
-
-      if (hits.length > 0) {
-        const pose = hits[0].getPose(refSpace);
-
-        reticle.visible = true;
-        reticle.matrix.fromArray(pose.transform.matrix);
-
-        const pos = new THREE.Vector3().setFromMatrixPosition(reticle.matrix);
-
-        grid.visible = true;
-        grid.position.copy(pos);
-
-        if (scanning) {
-          addPoint(pos);
-          drawPath();
-        }
-
-      } else {
-        reticle.visible = false;
-        grid.visible = false;
-      }
-    }
-  }
-
+function render() {
   renderer.render(scene, camera);
 }
 </script>
