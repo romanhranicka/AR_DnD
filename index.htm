@@ -2,7 +2,7 @@
 <html lang="cs">
 <head>
 <meta charset="UTF-8">
-<title>AR Measure PRO</title>
+<title>AR Measure FIX 2</title>
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 
 <style>
@@ -19,32 +19,32 @@ body { margin:0; overflow:hidden; font-family:Arial; }
 </head>
 
 <body>
-<div id="overlay">Najdi podlahu</div>
+<div id="overlay">Spusť AR</div>
 
 <script type="module">
 import * as THREE from 'https://unpkg.com/three@0.160.0/build/three.module.js';
 import { ARButton } from 'https://unpkg.com/three@0.160.0/examples/jsm/webxr/ARButton.js';
 
 let scene, camera, renderer;
-let reticle, grid;
+let reticle, grid, controller;
 
 let hitTestSource = null;
 let hitTestSourceRequested = false;
 
 let pointA = null;
 let previewLine = null;
-let finalLine = null;
-let markers = [];
 
 init();
 
 function init() {
   scene = new THREE.Scene();
+
   camera = new THREE.PerspectiveCamera(70, innerWidth/innerHeight, 0.01, 20);
 
   renderer = new THREE.WebGLRenderer({alpha:true, antialias:true});
   renderer.setSize(innerWidth, innerHeight);
   renderer.xr.enabled = true;
+
   document.body.appendChild(renderer.domElement);
 
   document.body.appendChild(ARButton.createButton(renderer, {
@@ -57,17 +57,19 @@ function init() {
   const geo = new THREE.RingGeometry(0.08,0.1,32);
   geo.rotateX(-Math.PI/2);
   reticle = new THREE.Mesh(geo, new THREE.MeshBasicMaterial({color:0x00ffaa}));
-  reticle.matrixAutoUpdate=false;
-  reticle.visible=false;
+  reticle.matrixAutoUpdate = false;
+  reticle.visible = false;
   scene.add(reticle);
 
   // grid
   grid = new THREE.GridHelper(1,10,0x00ffaa,0x00ffaa);
-  grid.visible=false;
+  grid.visible = false;
   scene.add(grid);
 
-  // TAP = měření
-  renderer.domElement.addEventListener('click', onSelect);
+  // XR controller (!!! klíčové)
+  controller = renderer.xr.getController(0);
+  controller.addEventListener('select', onSelect);
+  scene.add(controller);
 
   renderer.setAnimationLoop(render);
 }
@@ -78,21 +80,17 @@ function onSelect() {
   const pos = new THREE.Vector3().setFromMatrixPosition(reticle.matrix);
 
   if (!pointA) {
-    clearScene();
-
     pointA = pos.clone();
     addMarker(pointA);
-
     overlay("Vyber druhý bod");
   } else {
     addMarker(pos);
 
-    createFinalLine(pointA, pos);
+    createLine(pointA, pos);
     showDistance(pointA, pos);
 
-    overlay("Hotovo – pokračuj dalším měřením");
-
     pointA = null;
+    overlay("Hotovo – pokračuj");
   }
 }
 
@@ -103,29 +101,17 @@ function addMarker(pos) {
   );
   m.position.copy(pos);
   scene.add(m);
-  markers.push(m);
 }
 
-function createPreviewLine(a, b) {
-  if (previewLine) scene.remove(previewLine);
-
-  previewLine = new THREE.Line(
-    new THREE.BufferGeometry().setFromPoints([a,b]),
-    new THREE.LineBasicMaterial({color:0xffff00})
-  );
-
-  scene.add(previewLine);
-}
-
-function createFinalLine(a, b) {
-  finalLine = new THREE.Line(
+function createLine(a,b) {
+  const line = new THREE.Line(
     new THREE.BufferGeometry().setFromPoints([a,b]),
     new THREE.LineBasicMaterial({color:0xffffff})
   );
-  scene.add(finalLine);
+  scene.add(line);
 }
 
-function showDistance(a, b) {
+function showDistance(a,b) {
   const dist = a.distanceTo(b);
 
   const canvas = document.createElement('canvas');
@@ -133,13 +119,13 @@ function showDistance(a, b) {
   canvas.height = 256;
 
   const ctx = canvas.getContext('2d');
-  ctx.fillStyle = "white";
-  ctx.font = "48px Arial";
-  ctx.textAlign = "center";
-  ctx.fillText(dist.toFixed(2) + " m", 256, 130);
+  ctx.fillStyle="white";
+  ctx.font="48px Arial";
+  ctx.textAlign="center";
+  ctx.fillText(dist.toFixed(2)+" m",256,130);
 
   const sprite = new THREE.Sprite(
-    new THREE.SpriteMaterial({ map: new THREE.CanvasTexture(canvas) })
+    new THREE.SpriteMaterial({map:new THREE.CanvasTexture(canvas)})
   );
 
   const mid = new THREE.Vector3().addVectors(a,b).multiplyScalar(0.5);
@@ -149,14 +135,6 @@ function showDistance(a, b) {
   sprite.scale.set(0.5,0.25,1);
 
   scene.add(sprite);
-}
-
-function clearScene() {
-  markers.forEach(m => scene.remove(m));
-  markers = [];
-
-  if (previewLine) scene.remove(previewLine);
-  if (finalLine) scene.remove(finalLine);
 }
 
 function overlay(t) {
@@ -192,17 +170,10 @@ function render(timestamp, frame) {
         reticle.matrix.fromArray(pose.transform.matrix);
 
         const pos = new THREE.Vector3().setFromMatrixPosition(reticle.matrix);
-
         grid.visible = true;
         grid.position.copy(pos);
 
-        overlay("Tapni pro výběr bodu");
-
-        // LIVE PREVIEW
-        if (pointA) {
-          createPreviewLine(pointA, pos);
-        }
-
+        overlay("Tapni na obrazovku");
       } else {
         reticle.visible = false;
         grid.visible = false;
