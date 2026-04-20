@@ -2,7 +2,7 @@
 <html lang="cs">
 <head>
 <meta charset="UTF-8">
-<title>TRUE AR WORKING</title>
+<title>TRUE AR – working tap</title>
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 
 <style>
@@ -23,7 +23,7 @@ body { margin:0; overflow:hidden; }
 
 <body>
 
-<div id="overlay">Spusť AR</div>
+<div id="overlay">Spusť AR a klepni na plochu</div>
 
 <script type="module">
 import * as THREE from 'https://unpkg.com/three@0.160.0/build/three.module.js';
@@ -38,7 +38,12 @@ function init() {
 
   scene = new THREE.Scene();
 
-  camera = new THREE.PerspectiveCamera(70, window.innerWidth/window.innerHeight, 0.01, 20);
+  camera = new THREE.PerspectiveCamera(
+    70,
+    window.innerWidth/window.innerHeight,
+    0.01,
+    20
+  );
 
   renderer = new THREE.WebGLRenderer({ antialias:true, alpha:true });
   renderer.setSize(window.innerWidth, window.innerHeight);
@@ -52,10 +57,9 @@ function init() {
     })
   );
 
-  const light = new THREE.HemisphereLight(0xffffff, 0xbbbbff, 1);
-  scene.add(light);
+  scene.add(new THREE.HemisphereLight(0xffffff, 0xbbbbff, 1));
 
-  // RETICLE
+  // ===== RETICLE =====
   const geometry = new THREE.RingGeometry(0.08, 0.1, 32);
   const material = new THREE.MeshBasicMaterial({ color: 0x00ff00 });
 
@@ -68,6 +72,7 @@ function init() {
   let localSpace = null;
   let viewerSpace = null;
 
+  // ===== XR SESSION =====
   renderer.xr.addEventListener("sessionstart", async () => {
 
     const session = renderer.xr.getSession();
@@ -78,8 +83,31 @@ function init() {
     hitTestSource = await session.requestHitTestSource({
       space: viewerSpace
     });
+
+    // ✅ SPRÁVNÝ TAP EVENT
+    session.addEventListener("select", () => {
+
+      if (!reticle.visible) {
+        console.log("reticle není vidět");
+        return;
+      }
+
+      console.log("XR tap OK");
+
+      const cube = new THREE.Mesh(
+        new THREE.BoxGeometry(0.1, 0.1, 0.1),
+        new THREE.MeshStandardMaterial({ color: 0xff0000 })
+      );
+
+      // přesná pozice z reticle
+      cube.position.setFromMatrixPosition(reticle.matrix);
+
+      scene.add(cube);
+    });
+
   });
 
+  // ===== RENDER LOOP =====
   renderer.setAnimationLoop((time, frame) => {
 
     if (frame && hitTestSource) {
@@ -92,6 +120,7 @@ function init() {
 
         reticle.visible = true;
         reticle.matrix.fromArray(pose.transform.matrix);
+
         reticle.matrix.decompose(
           reticle.position,
           reticle.quaternion,
@@ -104,20 +133,6 @@ function init() {
     }
 
     renderer.render(scene, camera);
-  });
-
-  // TAP → OBJECT
-  renderer.domElement.addEventListener("click", () => {
-
-    if (!reticle.visible) return;
-
-    const cube = new THREE.Mesh(
-      new THREE.BoxGeometry(0.1,0.1,0.1),
-      new THREE.MeshStandardMaterial({ color: 0xff0000 })
-    );
-
-    cube.position.copy(reticle.position);
-    scene.add(cube);
   });
 }
 </script>
