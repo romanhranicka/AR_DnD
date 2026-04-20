@@ -2,20 +2,24 @@
 <html lang="cs">
 <head>
 <meta charset="UTF-8">
-<title>TRUE AR – working tap</title>
+<title>TRUE AR + AI (tap to place)</title>
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 
+<script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs"></script>
+<script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/coco-ssd"></script>
+
 <style>
-body { margin:0; overflow:hidden; }
+body { margin:0; overflow:hidden; font-family:Arial; }
 
 #overlay {
   position:absolute;
   top:20px;
   left:50%;
   transform:translateX(-50%);
-  background:black;
+  background:rgba(0,0,0,0.6);
   color:white;
-  padding:10px;
+  padding:10px 16px;
+  border-radius:8px;
   z-index:10;
 }
 </style>
@@ -23,24 +27,45 @@ body { margin:0; overflow:hidden; }
 
 <body>
 
-<div id="overlay">Spusť AR a klepni na plochu</div>
+<div id="overlay">Načítám AR + AI...</div>
 
 <script type="module">
 import * as THREE from 'https://unpkg.com/three@0.160.0/build/three.module.js';
 import { ARButton } from 'https://unpkg.com/three@0.160.0/examples/jsm/webxr/ARButton.js';
 
-let camera, scene, renderer;
+let scene, camera, renderer;
 let reticle;
+
+let model;
+let lastPrediction = null;
+
+let hitTestSource = null;
+let localSpace = null;
+let viewerSpace = null;
 
 init();
 
-function init() {
+async function init() {
 
+  // ===== VIDEO (pro AI) =====
+  const video = document.createElement("video");
+  video.setAttribute("autoplay", "");
+  video.setAttribute("playsinline", "");
+  video.style.display = "none";
+
+  const stream = await navigator.mediaDevices.getUserMedia({
+    video: { facingMode: "environment" }
+  });
+
+  video.srcObject = stream;
+  await new Promise(r => video.onloadeddata = r);
+
+  // ===== THREE =====
   scene = new THREE.Scene();
 
   camera = new THREE.PerspectiveCamera(
     70,
-    window.innerWidth/window.innerHeight,
+    window.innerWidth / window.innerHeight,
     0.01,
     20
   );
@@ -60,17 +85,13 @@ function init() {
   scene.add(new THREE.HemisphereLight(0xffffff, 0xbbbbff, 1));
 
   // ===== RETICLE =====
-  const geometry = new THREE.RingGeometry(0.08, 0.1, 32);
-  const material = new THREE.MeshBasicMaterial({ color: 0x00ff00 });
+  const geo = new THREE.RingGeometry(0.08, 0.1, 32);
+  const mat = new THREE.MeshBasicMaterial({ color: 0x00ff00 });
 
-  reticle = new THREE.Mesh(geometry, material);
+  reticle = new THREE.Mesh(geo, mat);
   reticle.rotation.x = -Math.PI / 2;
   reticle.visible = false;
   scene.add(reticle);
-
-  let hitTestSource = null;
-  let localSpace = null;
-  let viewerSpace = null;
 
   // ===== XR SESSION =====
   renderer.xr.addEventListener("sessionstart", async () => {
@@ -84,32 +105,55 @@ function init() {
       space: viewerSpace
     });
 
-    // ✅ SPRÁVNÝ TAP EVENT
-    session.addEventListener("select", () => {
-
-      if (!reticle.visible) {
-        console.log("reticle není vidět");
-        return;
-      }
-
-      console.log("XR tap OK");
-
-      const cube = new THREE.Mesh(
-        new THREE.BoxGeometry(0.1, 0.1, 0.1),
-        new THREE.MeshStandardMaterial({ color: 0xff0000 })
-      );
-
-      // přesná pozice z reticle
-      cube.position.setFromMatrixPosition(reticle.matrix);
-
-      scene.add(cube);
-    });
-
+    overlay("Namiř na plochu a klepni");
   });
 
-  // ===== RENDER LOOP =====
-  renderer.setAnimationLoop((time, frame) => {
+  // ===== AI =====
+  model = await cocoSsd.load();
+  overlay("AI připravena");
 
+  // ===== TAP (FIXED) =====
+  let lastTap = 0;
+
+  window.addEventListener("touchstart", () => {
+
+    const now = Date.now();
+    if (now - lastTap < 500) return;
+    lastTap = now;
+
+    if (!reticle.visible || !lastPrediction) return;
+
+    const text = lastPrediction.class + " " + Math.round(lastPrediction.score*100) + "%";
+
+    const label = createLabel(text);
+    label.position.setFromMatrixPosition(reticle.matrix);
+
+    scene.add(label);
+  });
+
+  renderer.setAnimationLoop(render);
+
+  // ===== AI LOOP =====
+  let lastDetect = 0;
+
+  async function runAI() {
+
+    const now = performance.now();
+    if (now - lastDetect < 500) return;
+
+    lastDetect = now;
+
+    const predictions = await model.detect(video);
+
+    if (predictions.length > 0) {
+      lastPrediction = predictions[0];
+    }
+  }
+
+  // ===== RENDER =====
+  function render(time, frame) {
+
+    // HIT TEST
     if (frame && hitTestSource) {
 
       const hits = frame.getHitTestResults(hitTestSource);
@@ -132,9 +176,47 @@ function init() {
       }
     }
 
+    runAI();
+
     renderer.render(scene, camera);
-  });
+  }
 }
+
+// ===== LABEL =====
+function createLabel(text) {
+
+  const canvas = document.createElement('canvas');
+  canvas.width = 256;
+  canvas.height = 128;
+
+  const ctx = canvas.getContext('2d');
+
+  ctx.fillStyle = "black";
+  ctx.fillRect(0,0,256,128);
+
+  ctx.fillStyle = "white";
+  ctx.font = "24px Arial";
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+
+  ctx.fillText(text, 128, 64);
+
+  const texture = new THREE.CanvasTexture(canvas);
+
+  const sprite = new THREE.Sprite(
+    new THREE.SpriteMaterial({ map: texture })
+  );
+
+  sprite.scale.set(0.4,0.2,1);
+
+  return sprite;
+}
+
+// ===== UI =====
+function overlay(t) {
+  document.getElementById('overlay').innerText = t;
+}
+
 </script>
 
 </body>
