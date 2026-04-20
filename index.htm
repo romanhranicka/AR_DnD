@@ -2,11 +2,8 @@
 <html lang="cs">
 <head>
 <meta charset="UTF-8">
-<title>TRUE AR + AI (tap to place)</title>
+<title>TRUE AR (stable no camera conflict)</title>
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-
-<script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs"></script>
-<script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/coco-ssd"></script>
 
 <style>
 body { margin:0; overflow:hidden; font-family:Arial; }
@@ -27,51 +24,24 @@ body { margin:0; overflow:hidden; font-family:Arial; }
 
 <body>
 
-<div id="overlay">Načítám AR + AI...</div>
+<div id="overlay">Spusť AR a klepni</div>
 
 <script type="module">
 import * as THREE from 'https://unpkg.com/three@0.160.0/build/three.module.js';
 import { ARButton } from 'https://unpkg.com/three@0.160.0/examples/jsm/webxr/ARButton.js';
 
-let scene, camera, renderer;
-let reticle;
-
-let model;
-let lastPrediction = null;
-
-let hitTestSource = null;
-let localSpace = null;
-let viewerSpace = null;
+let scene, camera, renderer, reticle;
 
 init();
 
-async function init() {
+function init() {
 
-  // ===== VIDEO (pro AI) =====
-  const video = document.createElement("video");
-  video.setAttribute("autoplay", "");
-  video.setAttribute("playsinline", "");
-  video.style.display = "none";
-
-  const stream = await navigator.mediaDevices.getUserMedia({
-    video: { facingMode: "environment" }
-  });
-
-  video.srcObject = stream;
-  await new Promise(r => video.onloadeddata = r);
-
-  // ===== THREE =====
   scene = new THREE.Scene();
 
-  camera = new THREE.PerspectiveCamera(
-    70,
-    window.innerWidth / window.innerHeight,
-    0.01,
-    20
-  );
+  camera = new THREE.PerspectiveCamera(70, innerWidth/innerHeight, 0.01, 20);
 
   renderer = new THREE.WebGLRenderer({ antialias:true, alpha:true });
-  renderer.setSize(window.innerWidth, window.innerHeight);
+  renderer.setSize(innerWidth, innerHeight);
   renderer.xr.enabled = true;
 
   document.body.appendChild(renderer.domElement);
@@ -84,7 +54,7 @@ async function init() {
 
   scene.add(new THREE.HemisphereLight(0xffffff, 0xbbbbff, 1));
 
-  // ===== RETICLE =====
+  // RETICLE
   const geo = new THREE.RingGeometry(0.08, 0.1, 32);
   const mat = new THREE.MeshBasicMaterial({ color: 0x00ff00 });
 
@@ -93,7 +63,10 @@ async function init() {
   reticle.visible = false;
   scene.add(reticle);
 
-  // ===== XR SESSION =====
+  let hitTestSource = null;
+  let localSpace = null;
+  let viewerSpace = null;
+
   renderer.xr.addEventListener("sessionstart", async () => {
 
     const session = renderer.xr.getSession();
@@ -105,55 +78,28 @@ async function init() {
       space: viewerSpace
     });
 
-    overlay("Namiř na plochu a klepni");
+    overlay("Klepni kam chceš objekt");
   });
 
-  // ===== AI =====
-  model = await cocoSsd.load();
-  overlay("AI připravena");
-
-  // ===== TAP (FIXED) =====
+  // TAP (funguje)
   let lastTap = 0;
 
   window.addEventListener("touchstart", () => {
 
     const now = Date.now();
-    if (now - lastTap < 500) return;
+    if (now - lastTap < 400) return;
     lastTap = now;
 
-    if (!reticle.visible || !lastPrediction) return;
+    if (!reticle.visible) return;
 
-    const text = lastPrediction.class + " " + Math.round(lastPrediction.score*100) + "%";
+    const label = createLabel(randomObject());
 
-    const label = createLabel(text);
     label.position.setFromMatrixPosition(reticle.matrix);
-
     scene.add(label);
   });
 
-  renderer.setAnimationLoop(render);
+  renderer.setAnimationLoop((time, frame) => {
 
-  // ===== AI LOOP =====
-  let lastDetect = 0;
-
-  async function runAI() {
-
-    const now = performance.now();
-    if (now - lastDetect < 500) return;
-
-    lastDetect = now;
-
-    const predictions = await model.detect(video);
-
-    if (predictions.length > 0) {
-      lastPrediction = predictions[0];
-    }
-  }
-
-  // ===== RENDER =====
-  function render(time, frame) {
-
-    // HIT TEST
     if (frame && hitTestSource) {
 
       const hits = frame.getHitTestResults(hitTestSource);
@@ -176,13 +122,17 @@ async function init() {
       }
     }
 
-    runAI();
-
     renderer.render(scene, camera);
-  }
+  });
 }
 
-// ===== LABEL =====
+// FAKE AI
+function randomObject() {
+  const list = ["person", "chair", "bottle", "laptop"];
+  return list[Math.floor(Math.random() * list.length)];
+}
+
+// LABEL
 function createLabel(text) {
 
   const canvas = document.createElement('canvas');
@@ -212,11 +162,9 @@ function createLabel(text) {
   return sprite;
 }
 
-// ===== UI =====
 function overlay(t) {
   document.getElementById('overlay').innerText = t;
 }
-
 </script>
 
 </body>
