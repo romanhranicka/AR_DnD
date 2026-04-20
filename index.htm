@@ -2,7 +2,7 @@
 <html lang="cs">
 <head>
 <meta charset="UTF-8">
-<title>AR + AI (Working Version)</title>
+<title>TRUE AR + AI</title>
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 
 <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs"></script>
@@ -22,43 +22,39 @@ body { margin:0; overflow:hidden; font-family:Arial; }
   border-radius:8px;
   z-index:10;
 }
-
-video {
-  position:absolute;
-  width:100%;
-  height:100%;
-  object-fit:cover;
-  z-index:0;
-}
-
-canvas {
-  position:absolute;
-  top:0;
-  left:0;
-}
 </style>
 </head>
 
 <body>
 
-<div id="overlay">Načítám AI...</div>
-<video id="video" autoplay playsinline></video>
+<div id="overlay">Načítám AR...</div>
 
 <script type="module">
 import * as THREE from 'https://unpkg.com/three@0.160.0/build/three.module.js';
+import { ARButton } from 'https://unpkg.com/three@0.160.0/examples/jsm/webxr/ARButton.js';
 
 let scene, camera, renderer;
 let model;
+
+let hitTestSource = null;
+let refSpace = null;
+let viewerSpace = null;
+
+let reticle;
+let anchoredObjects = [];
+
 let video;
 
-let labelMap = new Map();
-let lastPositions = new Map();
-
+// ===== INIT =====
 init();
 
 async function init() {
 
-  video = document.getElementById('video');
+  // ===== VIDEO (pro AI) =====
+  video = document.createElement("video");
+  video.setAttribute("autoplay", "");
+  video.setAttribute("playsinline", "");
+  video.style.display = "none";
 
   const stream = await navigator.mediaDevices.getUserMedia({
     video: { facingMode: "environment" }
@@ -67,182 +63,6 @@ async function init() {
   video.srcObject = stream;
 
   await new Promise(r => video.onloadeddata = r);
-
-  // THREE
-  scene = new THREE.Scene();
-
-  camera = new THREE.PerspectiveCamera(
-    70,
-    window.innerWidth / window.innerHeight,
-    0.01,
-    20
-  );
-
-  camera.position.z = 2;
-
-  renderer = new THREE.WebGLRenderer({ alpha:true });
-  renderer.setSize(window.innerWidth, window.innerHeight);
-
-  document.body.appendChild(renderer.domElement);
-
-  scene.add(new THREE.HemisphereLight(0xffffff, 0xbbbbff, 1));
-
-  model = await cocoSsd.load();
-
-  overlay("AI běží");
-
-  requestAnimationFrame(loop);
-}
-
-let lastDetect = 0;
-
-async function loop(time) {
-
-  requestAnimationFrame(loop);
-
-  if (!model) return;
-
-  if (time - lastDetect > 300) {
-    lastDetect = time;
-
-    const predictions = await model.detect(video);
-
-    handlePredictions(predictions);
-  }
-
-  renderer.render(scene, camera);
-}
-
-// ===== AI =====
-function handlePredictions(predictions) {
-
-  const used = new Set();
-
-  predictions.forEach(p => {
-
-    if (p.score < 0.6) return;
-
-    const key = p.class;
-
-    const centerX = (p.bbox[0] + p.bbox[2]/2) / video.videoWidth;
-    const centerY = (p.bbox[1] + p.bbox[3]/2) / video.videoHeight;
-
-    let pos = projectTo3D(centerX, centerY);
-    pos = smoothPosition(key, pos);
-
-    let label = labelMap.get(key);
-
-    if (!label) {
-      label = createLabel();
-      scene.add(label);
-      labelMap.set(key, label);
-    }
-
-    updateLabel(label, p);
-    label.position.copy(pos);
-
-    used.add(key);
-  });
-
-  labelMap.forEach((label, key) => {
-    if (!used.has(key)) {
-      scene.remove(label);
-      labelMap.delete(key);
-    }
-  });
-}
-
-// ===== PROJECTION =====
-function projectTo3D(x, y) {
-
-  const vec = new THREE.Vector3(
-    x * 2 - 1,
-    -(y * 2 - 1),
-    0.5
-  );
-
-  vec.unproject(camera);
-
-  const dir = vec.sub(camera.position).normalize();
-
-  return camera.position.clone().add(dir.multiplyScalar(2));
-}
-
-// ===== SMOOTH =====
-function smoothPosition(key, newPos) {
-
-  if (!lastPositions.has(key)) {
-    lastPositions.set(key, newPos.clone());
-  }
-
-  const prev = lastPositions.get(key);
-  prev.lerp(newPos, 0.2);
-
-  return prev;
-}
-
-// ===== LABEL =====
-function createLabel() {
-
-  const canvas = document.createElement('canvas');
-  canvas.width = 256;
-  canvas.height = 128;
-
-  const texture = new THREE.CanvasTexture(canvas);
-
-  const sprite = new THREE.Sprite(
-    new THREE.SpriteMaterial({ map: texture })
-  );
-
-  sprite.scale.set(0.6, 0.3, 1);
-
-  return sprite;
-}
-
-function updateLabel(sprite, prediction) {
-
-  const canvas = sprite.material.map.image;
-  const ctx = canvas.getContext('2d');
-
-  ctx.clearRect(0,0,256,128);
-
-  ctx.fillStyle = "black";
-  ctx.fillRect(0,0,256,128);
-
-  ctx.fillStyle = "white";
-  ctx.font = "22px Arial";
-  ctx.textAlign = "center";
-  ctx.textBaseline = "middle";
-
-  ctx.fillText(
-    prediction.class + " " + Math.round(prediction.score * 100) + "%",
-    128,
-    64
-  );
-
-  sprite.material.map.needsUpdate = true;
-}
-
-// ===== UI =====
-function overlay(t) {
-  document.getElementById('overlay').innerText = t;
-}
-
-</script>
-
-</body>
-</html>let model;
-
-let labelMap = new Map();
-let lastPositions = new Map();
-
-let hitTestSource = null;
-let xrRefSpace = null;
-let currentHitMatrix = null;
-
-init();
-
-async function init() {
 
   // ===== THREE =====
   scene = new THREE.Scene();
@@ -264,144 +84,119 @@ async function init() {
 
   scene.add(new THREE.HemisphereLight(0xffffff, 0xbbbbff, 1));
 
+  // ===== RETICLE =====
+  const geometry = new THREE.RingGeometry(0.08, 0.1, 32);
+  const material = new THREE.MeshBasicMaterial({ color: 0x00ff00 });
+
+  reticle = new THREE.Mesh(geometry, material);
+  reticle.rotation.x = -Math.PI / 2;
+  reticle.visible = false;
+  scene.add(reticle);
+
   // ===== XR SESSION =====
   renderer.xr.addEventListener("sessionstart", async () => {
 
     const session = renderer.xr.getSession();
 
-    xrRefSpace = await session.requestReferenceSpace("viewer");
+    viewerSpace = await session.requestReferenceSpace("viewer");
+    refSpace = await session.requestReferenceSpace("local");
 
     hitTestSource = await session.requestHitTestSource({
-      space: xrRefSpace
+      space: viewerSpace
     });
 
+    overlay("Namíř na plochu a klepni");
   });
 
-  // ===== AI MODEL =====
+  // ===== TAP TO PLACE =====
+  renderer.domElement.addEventListener("click", () => {
+
+    if (!reticle.visible || !lastPrediction) return;
+
+    const label = createLabel(
+      lastPrediction.class + " " + Math.round(lastPrediction.score*100) + "%"
+    );
+
+    label.position.setFromMatrixPosition(reticle.matrix);
+    scene.add(label);
+
+    anchoredObjects.push(label);
+  });
+
+  // ===== AI =====
   model = await cocoSsd.load();
-  overlay("AI připravena");
 
   renderer.setAnimationLoop(render);
 }
 
+// ===== AI =====
 let lastDetect = 0;
+let lastPrediction = null;
 
-async function render(time, frame) {
+async function runAI() {
+
+  const now = performance.now();
+  if (now - lastDetect < 500) return;
+
+  lastDetect = now;
+
+  const predictions = await model.detect(video);
+
+  if (predictions.length > 0) {
+    lastPrediction = predictions[0];
+  }
+}
+
+// ===== RENDER =====
+function render(time, frame) {
 
   // ===== HIT TEST =====
   if (frame && hitTestSource) {
 
-    const referenceSpace = renderer.xr.getReferenceSpace();
-    const hits = frame.getHitTestResults(hitTestSource);
+    const hitTestResults = frame.getHitTestResults(hitTestSource);
 
-    if (hits.length > 0) {
-      const hit = hits[0];
-      const pose = hit.getPose(referenceSpace);
-      currentHitMatrix = pose.transform.matrix;
+    if (hitTestResults.length > 0) {
+
+      const hit = hitTestResults[0];
+      const pose = hit.getPose(refSpace);
+
+      reticle.visible = true;
+      reticle.matrix.fromArray(pose.transform.matrix);
+      reticle.matrix.decompose(
+        reticle.position,
+        reticle.quaternion,
+        reticle.scale
+      );
+
+    } else {
+      reticle.visible = false;
     }
   }
 
-  // ===== AI LOOP =====
-  if (model && time - lastDetect > 300) {
-    lastDetect = time;
-
-    // fallback: použijeme XR framebuffer jako "fake video"
-    const predictions = await model.detect(renderer.domElement);
-
-    handlePredictions(predictions);
-  }
+  // ===== AI =====
+  runAI();
 
   renderer.render(scene, camera);
 }
 
-function handlePredictions(predictions) {
-
-  const used = new Set();
-
-  predictions.forEach(p => {
-
-    if (p.score < 0.6) return;
-
-    const key = p.class;
-
-    const centerX = (p.bbox[0] + p.bbox[2]/2) / window.innerWidth;
-    const centerY = (p.bbox[1] + p.bbox[3]/2) / window.innerHeight;
-
-    let pos = placeStable(centerX, centerY);
-    if (!pos) return;
-
-    pos = smoothPosition(key, pos);
-
-    let label = labelMap.get(key);
-
-    if (!label) {
-      label = createLabel("");
-      scene.add(label);
-      labelMap.set(key, label);
-    }
-
-    updateLabel(label, p);
-    label.position.copy(pos);
-
-    used.add(key);
-  });
-
-  labelMap.forEach((label, key) => {
-    if (!used.has(key)) {
-      scene.remove(label);
-      labelMap.delete(key);
-    }
-  });
-}
-
-// ===== STABLE POSITION =====
-function placeStable(x, y) {
-
-  if (!currentHitMatrix) return null;
-
-  const base = new THREE.Matrix4().fromArray(currentHitMatrix);
-  const position = new THREE.Vector3().setFromMatrixPosition(base);
-
-  const offset = projectTo3D(x, y);
-
-  return position.lerp(offset, 0.3);
-}
-
-// ===== PROJECTION =====
-function projectTo3D(x, y) {
-
-  const vec = new THREE.Vector3(
-    x * 2 - 1,
-    -(y * 2 - 1),
-    0.5
-  );
-
-  vec.unproject(camera);
-
-  const dir = vec.sub(camera.position).normalize();
-
-  return camera.position.clone().add(dir.multiplyScalar(2));
-}
-
-// ===== SMOOTH =====
-function smoothPosition(key, newPos) {
-
-  if (!lastPositions.has(key)) {
-    lastPositions.set(key, newPos.clone());
-  }
-
-  const prev = lastPositions.get(key);
-  prev.lerp(newPos, 0.2);
-
-  return prev;
-}
-
 // ===== LABEL =====
-function createLabel() {
+function createLabel(text) {
 
   const canvas = document.createElement('canvas');
   canvas.width = 256;
   canvas.height = 128;
+
+  const ctx = canvas.getContext('2d');
+
+  ctx.fillStyle = "black";
+  ctx.fillRect(0,0,256,128);
+
+  ctx.fillStyle = "white";
+  ctx.font = "24px Arial";
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+
+  ctx.fillText(text, 128, 64);
 
   const texture = new THREE.CanvasTexture(canvas);
 
@@ -409,33 +204,9 @@ function createLabel() {
     new THREE.SpriteMaterial({ map: texture })
   );
 
-  sprite.scale.set(0.5, 0.25, 1);
+  sprite.scale.set(0.4,0.2,1);
 
   return sprite;
-}
-
-function updateLabel(sprite, prediction) {
-
-  const canvas = sprite.material.map.image;
-  const ctx = canvas.getContext('2d');
-
-  ctx.clearRect(0,0,256,128);
-
-  ctx.fillStyle = "black";
-  ctx.fillRect(0,0,256,128);
-
-  ctx.fillStyle = "white";
-  ctx.font = "22px Arial";
-  ctx.textAlign = "center";
-  ctx.textBaseline = "middle";
-
-  ctx.fillText(
-    prediction.class + " " + Math.round(prediction.score * 100) + "%",
-    128,
-    64
-  );
-
-  sprite.material.map.needsUpdate = true;
 }
 
 // ===== UI =====
