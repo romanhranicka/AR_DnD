@@ -1,195 +1,181 @@
 <!DOCTYPE html>
 <html lang="cs">
 <head>
-  <meta charset="UTF-8">
-  <title>AR Měření vzdálenosti</title>
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta charset="UTF-8">
+<title>AR Měření – FIX</title>
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
 
-  <style>
-    body { margin: 0; overflow: hidden; font-family: Arial; }
+<style>
+body { margin:0; overflow:hidden; font-family:Arial; }
 
-    #overlay {
-      position: absolute;
-      top: 20px;
-      left: 50%;
-      transform: translateX(-50%);
-      background: rgba(0,0,0,0.6);
-      color: white;
-      padding: 10px 16px;
-      border-radius: 8px;
-      z-index: 10;
-    }
+#overlay {
+  position:absolute; top:20px; left:50%;
+  transform:translateX(-50%);
+  background:rgba(0,0,0,0.6);
+  color:#fff; padding:10px 16px;
+  border-radius:8px; z-index:10;
+}
 
-    #startButton, #measureButton {
-      position: absolute;
-      left: 50%;
-      transform: translateX(-50%);
-      padding: 12px 20px;
-      font-size: 16px;
-      border: none;
-      border-radius: 8px;
-      color: white;
-      z-index: 10;
-    }
-
-    #startButton { bottom: 80px; background: #00c896; }
-    #measureButton { bottom: 20px; background: #007aff; display: none; }
-  </style>
+#measureButton {
+  position:absolute; bottom:20px; left:50%;
+  transform:translateX(-50%);
+  padding:12px 20px;
+  background:#007aff; color:white;
+  border:none; border-radius:8px;
+  display:none; z-index:10;
+}
+</style>
 </head>
 
 <body>
 
-<div id="overlay">Hledám podlahu...</div>
-<button id="startButton">Spustit AR</button>
+<div id="overlay">Inicializace...</div>
 <button id="measureButton">Změřit vzdálenost</button>
 
 <script type="module">
 import * as THREE from 'https://unpkg.com/three@0.160.0/build/three.module.js';
+import { ARButton } from 'https://unpkg.com/three@0.160.0/examples/jsm/webxr/ARButton.js';
 
-let camera, scene, renderer;
+let scene, camera, renderer;
 let reticle, grid;
+
 let hitTestSource = null;
 let hitTestSourceRequested = false;
 
-// měření
-let pointA = null;
-let pointB = null;
-let markers = [];
-let line = null;
-let textMesh = null;
+let pointA=null, pointB=null;
+let markers=[], line=null, textMesh=null;
 
 init();
 
 function init() {
   scene = new THREE.Scene();
-  camera = new THREE.PerspectiveCamera(70, window.innerWidth/window.innerHeight, 0.01, 20);
 
-  renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
-  renderer.setSize(window.innerWidth, window.innerHeight);
+  camera = new THREE.PerspectiveCamera(70, innerWidth/innerHeight, 0.01, 20);
+
+  renderer = new THREE.WebGLRenderer({alpha:true, antialias:true});
+  renderer.setSize(innerWidth, innerHeight);
   renderer.xr.enabled = true;
   document.body.appendChild(renderer.domElement);
 
-  scene.add(new THREE.HemisphereLight(0xffffff, 0xbbbbff, 1));
+  document.body.appendChild(ARButton.createButton(renderer, {
+    requiredFeatures: ['hit-test','local-floor']
+  }));
+
+  scene.add(new THREE.HemisphereLight(0xffffff,0xbbbbff,1));
 
   // reticle
-  const geo = new THREE.RingGeometry(0.08, 0.1, 32);
+  const geo = new THREE.RingGeometry(0.08,0.1,32);
   geo.rotateX(-Math.PI/2);
   reticle = new THREE.Mesh(geo, new THREE.MeshBasicMaterial({color:0x00ffaa}));
-  reticle.matrixAutoUpdate = false;
-  reticle.visible = false;
+  reticle.matrixAutoUpdate=false;
+  reticle.visible=false;
   scene.add(reticle);
 
   // grid
   grid = new THREE.GridHelper(1,10,0x00ffaa,0x00ffaa);
-  grid.visible = false;
+  grid.visible=false;
   scene.add(grid);
 
-  const startBtn = document.getElementById('startButton');
-  const measureBtn = document.getElementById('measureButton');
+  document.getElementById('measureButton').onclick = handleMeasure;
 
-  startBtn.onclick = async () => {
-    const session = await navigator.xr.requestSession('immersive-ar', {
-      requiredFeatures: ['hit-test','local-floor']
-    });
-
-    renderer.xr.setReferenceSpaceType('local-floor');
-    await renderer.xr.setSession(session);
-
-    startBtn.style.display = 'none';
-    measureBtn.style.display = 'block';
-
-    renderer.setAnimationLoop(render);
-  };
-
-  measureBtn.onclick = handleMeasure;
-
-  window.addEventListener('resize', () => {
-    camera.aspect = window.innerWidth/window.innerHeight;
-    camera.updateProjectionMatrix();
-    renderer.setSize(window.innerWidth, window.innerHeight);
+  renderer.xr.addEventListener('sessionstart', () => {
+    document.getElementById('overlay').innerText = "Hledám podlahu...";
+    document.getElementById('measureButton').style.display = 'block';
   });
+
+  renderer.xr.addEventListener('sessionend', () => {
+    hitTestSourceRequested = false;
+    hitTestSource = null;
+
+    renderer.setAnimationLoop(null);
+
+    document.getElementById('overlay').innerText = "AR ukončeno";
+    document.getElementById('measureButton').style.display = 'none';
+  });
+
+  renderer.setAnimationLoop(render);
 }
 
 function handleMeasure() {
   if (!reticle.visible) return;
 
-  const pos = new THREE.Vector3();
-  pos.setFromMatrixPosition(reticle.matrix);
+  const pos = new THREE.Vector3().setFromMatrixPosition(reticle.matrix);
 
   if (!pointA) {
     pointA = pos.clone();
     addMarker(pointA);
-    document.getElementById('overlay').innerText = "Vyber druhý bod";
+    overlay("Vyber druhý bod");
   } else if (!pointB) {
     pointB = pos.clone();
     addMarker(pointB);
     createMeasurement();
-    document.getElementById('overlay').innerText = "Měření dokončeno";
-    
-    // reset pro další měření
-    setTimeout(resetMeasurement, 3000);
+    overlay("Hotovo");
+    setTimeout(resetMeasurement,3000);
   }
 }
 
-function addMarker(position) {
-  const sphere = new THREE.Mesh(
+function addMarker(pos) {
+  const m = new THREE.Mesh(
     new THREE.SphereGeometry(0.03),
     new THREE.MeshBasicMaterial({color:0x007aff})
   );
-  sphere.position.copy(position);
-  scene.add(sphere);
-  markers.push(sphere);
+  m.position.copy(pos);
+  scene.add(m);
+  markers.push(m);
 }
 
 function createMeasurement() {
-  // čára
-  const geometry = new THREE.BufferGeometry().setFromPoints([pointA, pointB]);
-  const material = new THREE.LineBasicMaterial({color:0xffffff});
-  line = new THREE.Line(geometry, material);
+  line = new THREE.Line(
+    new THREE.BufferGeometry().setFromPoints([pointA,pointB]),
+    new THREE.LineBasicMaterial({color:0xffffff})
+  );
   scene.add(line);
 
-  // vzdálenost
-  const distance = pointA.distanceTo(pointB);
+  const dist = pointA.distanceTo(pointB);
 
-  // text (canvas → textura)
   const canvas = document.createElement('canvas');
-  canvas.width = 512;
-  canvas.height = 256;
+  canvas.width=512; canvas.height=256;
   const ctx = canvas.getContext('2d');
+  ctx.fillStyle="white";
+  ctx.font="48px Arial";
+  ctx.textAlign="center";
+  ctx.fillText(dist.toFixed(2)+" m",256,130);
 
-  ctx.fillStyle = "white";
-  ctx.font = "48px Arial";
-  ctx.textAlign = "center";
-  ctx.fillText(distance.toFixed(2) + " m", 256, 130);
+  const sprite = new THREE.Sprite(
+    new THREE.SpriteMaterial({map:new THREE.CanvasTexture(canvas)})
+  );
 
-  const texture = new THREE.CanvasTexture(canvas);
-  const spriteMaterial = new THREE.SpriteMaterial({ map: texture });
-  textMesh = new THREE.Sprite(spriteMaterial);
-
-  const mid = new THREE.Vector3().addVectors(pointA, pointB).multiplyScalar(0.5);
+  const mid = new THREE.Vector3().addVectors(pointA,pointB).multiplyScalar(0.5);
   mid.y += 0.05;
 
-  textMesh.position.copy(mid);
-  textMesh.scale.set(0.5,0.25,1);
+  sprite.position.copy(mid);
+  sprite.scale.set(0.5,0.25,1);
 
-  scene.add(textMesh);
+  textMesh = sprite;
+  scene.add(sprite);
 }
 
 function resetMeasurement() {
-  pointA = null;
-  pointB = null;
+  pointA=null; pointB=null;
 
-  markers.forEach(m => scene.remove(m));
-  markers = [];
+  markers.forEach(m=>scene.remove(m));
+  markers=[];
 
-  if (line) scene.remove(line);
-  if (textMesh) scene.remove(textMesh);
+  if(line) scene.remove(line);
+  if(textMesh) scene.remove(textMesh);
 }
 
+function overlay(t){ document.getElementById('overlay').innerText=t; }
+
 function render(timestamp, frame) {
+  if (!renderer.xr.isPresenting) {
+    renderer.render(scene, camera);
+    return;
+  }
+
   if (frame) {
-    const refSpace = renderer.xr.getReferenceSpace();
     const session = renderer.xr.getSession();
+    const refSpace = renderer.xr.getReferenceSpace();
 
     if (!hitTestSourceRequested) {
       session.requestReferenceSpace('viewer').then(space=>{
@@ -214,10 +200,11 @@ function render(timestamp, frame) {
         grid.visible = true;
         grid.position.copy(pos);
 
-        document.getElementById('overlay').innerText = "Prostor detekován";
+        overlay("Prostor detekován");
       } else {
         reticle.visible = false;
-        document.getElementById('overlay').innerText = "Hledám podlahu...";
+        grid.visible = false;
+        overlay("Hledám podlahu...");
       }
     }
   }
